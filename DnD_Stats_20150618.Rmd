@@ -1,0 +1,179 @@
+---
+layout: post
+title: "Dungeons and Dragons, Stats for 6/18/2015"
+date:  2015-06-21 22:46:43
+comments: true
+categories: R, ggplot2, DnD
+published: true
+author: dyg
+---
+
+So me and my friends play Dungeons and Dragons every week. A few weeks in we 
+decided it would be a good idea to start recording our d20 rolls. This came from
+one of my friends being declared as highly bimodel in his rolls, i.e. he rolls 
+close to a 1 or a 20. I'm no fan of confirmation bias, and having a love for
+stats, R and data graphics I thought this would be a fun analysis. I will most
+likely post these types of analyses every week or so depending on how busy I am.
+
+##A look at the dataset
+```{r dataLoad, echo = TRUE}
+#all the states are kept in a google docs sheet, which can be downloaded as a 
+#csv
+df <- read.csv("Roll_Stats_06212015.csv", header = T, sep = ",")
+
+#first look
+str(df)
+```
+
+Ah, a few considerations before we begin plotting away. First the Person 
+variable needs to be cleaned up, I know for a fact that we have 4 players, but 
+R is listing 10 uniques. To me this means there are probably some typos or
+leading and trailing spaces. Secondly, the Date variable isn't a date. This 
+should do it:
+
+```{r cleanData, echo = TRUE, message=FALSE}
+#load some libs
+library(stringr)
+library(dplyr)
+
+#Now do the cleaning
+df$Person <- df$Person %>%
+  tolower() %>%
+    str_trim() %>%
+      as.factor()
+  
+df$Date <- as.Date(as.character(df$Date), format = "%m/%d/%Y")
+
+#have a quick look at the cleaned dataset
+str(df)
+```  
+
+Perfect. First I want see how many total rolls have happened, and how many weeks
+we have been recording data:
+
+```{r, basicStats, echo = TRUE}
+#Observe that each row is a roll
+head(df)
+
+#now what are the dimensions of the dataset
+length(df$Roll_Value)
+```
+
+Now how many rolls has everyone made to date, by date, and what were they, 
+specifically?
+
+```{r, rollByDate, echo = TRUE}
+#Total rolls by Person
+table(df$Person)
+
+#Rolls by person/date
+table(df$Date, df$Person)
+
+#Roll count by Person and Roll
+table(df$Roll_Value, df$Person)
+```
+
+Thats nice but its really just for someone who wants detail that a plot isn't 
+going to provide. A few things of note, me (Jeff) have rolled the second most
+one's after mike. I would expect this data to be affected by play style, class,
+and most importantly luck. A quick note, the player "mel" is a halfling who has
+the feat "lucky". Basically, whenever she rolls a nat 1 she can re-roll. Being
+the data scribe in the group my practice has been to record both d20 rolls.
+
+##Pretty Graphics
+Ok now on to the fun stuff. I want to see each players total distributions, and
+how each players roll behavior has changed each week.
+
+```{r playerDistributions, echo = TRUE, fig.height=8, fig.width=11}
+#load ggplot
+library(ggplot2)
+
+#Make histrograms faceted by person
+ggplot(data = df, aes(x = Roll_Value, fill = Person)) +
+  geom_histogram(stat = "bin") +
+  facet_grid(Person ~ .) +
+  ggtitle("Rolls by Player") +
+  scale_x_discrete(breaks = seq(1, 20)) 
+```
+
+Now lets see how each players rolls have changed over time. For this I'm going
+with a tried and true time series plot, plotting the mean and median roll
+for each player distribution.
+
+```{r playerChanges, echo = TRUE, fig.height = 8, fig.width = 11}
+#load dplyr
+library(dplyr)
+
+#do some statistics
+simpleStat <- function(fun, geom="point", ...) {
+  stat_summary(fun.y = fun, geom=geom, ...)
+}
+
+myQuantile <- function(x) {
+  out <- quantile(x, probs = c(0.25, 0.75))
+  out
+}
+
+myMode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+#now generate plot
+ggplot(df, aes(x = factor(Date), y = Roll_Value, fill = Person)) +
+  xlab("Date") +
+  geom_violin(trim = FALSE, adjust = 0.5) +
+  simpleStat(myMode, size = 3) +
+  simpleStat(mean, size = 1.5) +
+  facet_grid(Person ~ .) +
+  theme(legend.position = "none") +
+  ggtitle("Player Roll Distributions by Date")
+```
+
+The plot is a violin plot for each week of data given (for more on Violin Plots
+go [here][1]), the large dot in each violin plot is the mode of that players
+rolls for that week, the smaller dot is the mean of that players rolls for that 
+week. Subjectively, mode seems to be a better indicator of how well I percieve 
+I roll in a given week. For instance, I remember think "I rolled like complete 
+crap today", two weeks ago on 6/12. The mode displays this more clearly than 
+the mean.
+
+
+Lastly I want a line plot to literally connect the dots over each week for each
+player:
+
+```{r finalPlot, echo = TRUE, fig.height = 8, fig.width = 11}
+#generate summary dataset
+df.change <- df %>%
+  group_by(Date, Person) %>%
+    summarise(personMean = mean(Roll_Value, na.rm = TRUE),
+              personMode = myMode(Roll_Value))
+
+#check the new dataset
+head(df.change)
+
+#great now lets melt it with tidyr
+library(tidyr)
+df.tidy <- df.change %>%
+  gather(stat, value, -Person, -Date)
+
+#again, a quick look
+head(df.tidy)
+
+#plot time series
+ggplot(df.tidy, aes(x = factor(Date), y = value, group = stat, 
+                    color = stat)) +
+  geom_line(aes(linetype = stat), size = 1.5) +
+  facet_grid(Person ~ .) +
+  ggtitle("Mean and Mode by Player, by Date") +
+  ylab("Roll Value") + 
+  xlab("Date")
+```
+
+##Conclusions
+My friend Will thinks he encounters low rolls every three weeks. Well that is
+objectively not true according to this dataset. However Will is the most 
+consistent player. Looking at his mean and mode he shows the least variation of
+anyone. One interesting detail is that
+Mike is decidedly bimodal, is mode oscillates almost perfectly on a two week
+basis. Not only this but he has rolled the most 1's, and the second most 20's. 
